@@ -1,73 +1,82 @@
-from typing import Dict, List, Optional, Tuple
-from flwr.serverapp import Grid
+from typing import Dict, List, Optional, Tuple, Union
 from flwr.serverapp.strategy import FedAvg
 from flwr.app import ArrayRecord, ConfigRecord, Message, MetricRecord, RecordDict
-from flwr.common import FitRes
+from flwr.common import FitRes, Parameters, Scalar, parameters_to_ndarrays, ndarrays_to_parameters
+from flwr.server.client_proxy import ClientProxy
 import numpy as np
 
 
 class FedNovaLite(FedAvg):
-    """FedNova strategy implementing normalized averaging to handle client heterogeneity."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # We need to track the previous global model to calculate updates (Delta)
+        self.global_parameters: Optional[List[np.ndarray]] = None
 
-    def __init__(self, fraction_train: float = 1.0, *args, **kwargs):
-        super().__init__(
-            fraction_train=fraction_train,
-            # override the aggregation method used in FedAvg to implement w_i weight
-            train_metrics_aggr_fn=self.fednova_metrics_aggregation, # see FedAvg documentation
-            # https://flower.ai/docs/framework/ref-api/flwr.serverapp.strategy.FedAvg.html#flwr.serverapp.strategy.FedAvg
-            *args,
-            **kwargs
-        )
-        self.client_tau_history: Dict[str, List[int]] = {}  # Track tau_i per client (# of local steps)
+    def configure_fit(
+        self, server_round: int, parameters: Parameters, client_manager
+    ):
+        # Save the global model weights before sending to clients
+        self.global_parameters = parameters_to_ndarrays(parameters)
+        return super().configure_fit(server_round, parameters, client_manager)
 
-    def fednova_metrics_aggregation(
-            self, records: List[RecordDict], weighting_metric_name: str
-    ) -> MetricRecord:
-        """This code is to aggregate the FedNova metrics"""
-        # Extract metrics from all records
-        all_metrics = []
-        tau_i_list = [] # collects tau metrics from client nodes
+    def aggregate_fit(
+        self,
+        server_round: int,
+        results: List[Tuple[ClientProxy, FitRes]],
+        failures: List[Union[Tuple[ClientProxy, FitRes], BaseException]],
+    ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
 
-        for record in records:
-            for record_item in record.metric_records.values():
-                metrics_dict = dict(record_item)
-                all_metrics.append(metrics_dict)
-                tau_i = metrics_dict.get("tau_i", 1) # extract value of tau
-                tau_i_list.append(tau_i) # build the list of all tau values
+        if not results:
+            return None, {}
 
-        # Use standard weighted aggregation to weigh contributions against dataset size
-        aggregated_metrics = MetricRecord()
+        # 1. Extract Weights and Tau from results
+        # We need to reconstruct the 'update' (Delta) for each client
+        updates = []
+        tau_list = []
+        num_examples_list = []
 
-        # Get all metric keys
-        metric_keys = set()
-        for metrics in all_metrics:
-            metric_keys.update(metrics.keys())
+        for client, fit_res in results:
+            # Get tau from metrics (default to 1 to avoid div/0)
+            tau_i = fit_res.metrics.get("tau_i", 1)
+            tau_list.append(tau_i)
+            num_examples_list.append(fit_res.num_examples)
 
-        # Remove the weighting key
-        metric_keys.discard(weighting_metric_name)
+            # Get client parameters
+            client_params = parameters_to_ndarrays(fit_res.parameters)
 
-        # Perform weighted averaging for each metric
-        for key in metric_keys:
-            weighted_sum = 0.0
-            total_weight = 0.0
+            # Calculate Delta_i = Global - Client
+            # (How much the client CHANGED the model)
+            delta_i = [
+                g - c for g, c in zip(self.global_parameters, client_params)
+            ]
 
-            for metrics in all_metrics:
-                if key in metrics:
-                    # calculate a client's weight
-                    weight = metrics.get(weighting_metric_name, 1) # holds number of examples client trains on
-                    weighted_sum += metrics[key] * weight
-                    total_weight += weight
+            # Normalize Delta by tau_i (FedNova core logic)
+            # "Normalized Gradient" = Total Change / Local Steps
+            norm_grad = [layer / tau_i for layer in delta_i]
+            updates.append(norm_grad)
 
-            # calculate the weighted average for each metric
-            if total_weight > 0:
-                aggregated_metrics[key] = weighted_sum / total_weight
+        # 2. Calculate Effective Tau (tau_eff)
+        # This is usually the weighted average of local steps
+        total_examples = sum(num_examples_list)
+        tau_eff = sum([t * (n/total_examples) for t, n in zip(tau_list, num_examples_list)])
 
-        # Add FedNova-specific metrics
-        if tau_i_list: # if we collected any tau values
-            # Convert numpy types to native Python types
-            aggregated_metrics["fednova_tau_avg"] = float(np.mean(tau_i_list)) # average local steps across clients
-            aggregated_metrics["fednova_tau_std"] = float(np.std(tau_i_list)) # standard deviation
-            aggregated_metrics["fednova_tau_min"] = int(np.min(tau_i_list)) # fewest local steps by a client
-            aggregated_metrics["fednova_tau_max"] = int(np.max(tau_i_list)) # most local steps by a client
+        # 3. Aggregate Normalized Gradients
+        # aggregated_update = Sum( p_i * norm_grad_i )
+        weighted_grads = [np.zeros_like(w) for w in self.global_parameters]
 
-        return aggregated_metrics
+        for i, norm_grad in enumerate(updates):
+            p_i = num_examples_list[i] / total_examples
+            for layer_idx, layer in enumerate(norm_grad):
+                weighted_grads[layer_idx] += p_i * layer
+
+        # 4. Apply to Global Model
+        # New Global = Old Global - (tau_eff * aggregated_update)
+        # (Treating server learning rate as 1.0 for simplicity)
+        new_weights = [
+            g - (tau_eff * wg)
+            for g, wg in zip(self.global_parameters, weighted_grads)
+        ]
+
+        # 5. Return parameters and custom metrics (optional)
+        metrics = {"tau_eff": tau_eff}
+        return ndarrays_to_parameters(new_weights), metrics 

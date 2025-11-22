@@ -38,6 +38,7 @@ def train(msg: Message, context: Context):
         random_local_epochs,
         msg.content["config"]["lr"],
         device,
+        proximal_mu=0.01,
     )
 
     # Construct and return reply Message
