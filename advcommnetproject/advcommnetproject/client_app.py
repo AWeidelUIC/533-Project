@@ -1,6 +1,7 @@
 """AdvCommNetProject: A Flower / PyTorch app."""
 
 import torch
+import random
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 
@@ -27,11 +28,14 @@ def train(msg: Message, context: Context):
     num_partitions = context.node_config["num-partitions"]
     trainloader, _ = load_data(partition_id, num_partitions)
 
+    random_local_epochs = max(1, min(10, int(random.expovariate(0.5) + 1)))
+    print(f"Client {partition_id} using {random_local_epochs} local epochs (random)")
+
     # Call the training function (now returns both loss and tau_i)
     train_loss, tau_i = train_fn(
         model,
         trainloader,
-        context.run_config["local-epochs"],
+        random_local_epochs,
         msg.content["config"]["lr"],
         device,
     )
@@ -42,6 +46,7 @@ def train(msg: Message, context: Context):
         "train_loss": train_loss,
         "num-examples": len(trainloader.dataset),
         "tau_i": tau_i,  # Report local steps (tau_i) for FedNova
+        "local epochs used: ": random_local_epochs,
     }
     metric_record = MetricRecord(metrics)
     content = RecordDict({"arrays": model_record, "metrics": metric_record})
