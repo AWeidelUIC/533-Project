@@ -4,8 +4,11 @@ import torch
 from flwr.app import ArrayRecord, ConfigRecord, Context
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
+from advcommnetproject.custom_strategy import FedNovaLite
 
 from advcommnetproject.task import Net
+
+from advcommnetproject.task import central_evaluate
 
 # Create ServerApp
 app = ServerApp()
@@ -24,15 +27,16 @@ def main(grid: Grid, context: Context) -> None:
     global_model = Net()
     arrays = ArrayRecord(global_model.state_dict())
 
-    # Initialize FedAvg strategy
-    strategy = FedAvg(fraction_train=fraction_train)
+    # Initialize FedNova strategy instead of FedAvg
+    strategy = FedNovaLite(fraction_train=fraction_train)
 
-    # Start strategy, run FedAvg for `num_rounds`
+    # Start strategy, run FedNova for `num_rounds`
     result = strategy.start(
         grid=grid,
         initial_arrays=arrays,
         train_config=ConfigRecord({"lr": lr}),
         num_rounds=num_rounds,
+        evaluate_fn=central_evaluate,
     )
 
     # Save final model to disk

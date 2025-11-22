@@ -27,8 +27,8 @@ def train(msg: Message, context: Context):
     num_partitions = context.node_config["num-partitions"]
     trainloader, _ = load_data(partition_id, num_partitions)
 
-    # Call the training function
-    train_loss = train_fn(
+    # Call the training function (now returns both loss and tau_i)
+    train_loss, tau_i = train_fn(
         model,
         trainloader,
         context.run_config["local-epochs"],
@@ -41,6 +41,7 @@ def train(msg: Message, context: Context):
     metrics = {
         "train_loss": train_loss,
         "num-examples": len(trainloader.dataset),
+        "tau_i": tau_i,  # Report local steps (tau_i) for FedNova
     }
     metric_record = MetricRecord(metrics)
     content = RecordDict({"arrays": model_record, "metrics": metric_record})
