@@ -35,8 +35,12 @@ clientapp = "advcommnetproject.client_app:app"
 [tool.flwr.app.config]
 num-server-rounds = 3 # 3 for testing, 10 for aggregating results
 fraction-train = 0.5
-local-epochs = 1
 lr = 0.01
+# Experiment 1 (FedAvg): strategy = "fedavg", prox_mu = 0.0
+# Experiment 2 (FedNova):  strategy = "fednova", prox_mu = 0.0
+# Experiment 3 (FedNova + Prox): strategy = "fednova", prox_mu = 0.01
+strategy = "fednova"
+proximal_mu = 0.01
 
 # Default federation to use when running the app
 [tool.flwr.federations]
