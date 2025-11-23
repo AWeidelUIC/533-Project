@@ -30,6 +30,7 @@ def train(msg: Message, context: Context):
 
     # random epochs simulates system heterogeneity (different devices work at different speeds)
     random_local_epochs = max(1, min(5, int(random.expovariate(0.5) + 1)))
+    proximal_mu = msg.content["config"].get("proximal_mu", 0.0)
     print(f"Client {partition_id} using {random_local_epochs} local epochs")
 
     # Call the training function
@@ -39,7 +40,7 @@ def train(msg: Message, context: Context):
         random_local_epochs,
         msg.content["config"]["lr"],
         device,
-        proximal_mu=0.01,
+        proximal_mu=proximal_mu,
     )
 
     # Construct and return reply Message
