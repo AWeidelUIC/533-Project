@@ -69,14 +69,15 @@ def load_data(partition_id: int, num_partitions: int):
     partition = fds.load_partition(partition_id)
     # Divide data on each node: 80% train, 20% test
     partition_train_test = partition.train_test_split(test_size=0.2, seed=42)
+    # Construct dataloaders
     partition_train_test = partition_train_test.with_transform(apply_transforms)
     trainloader = DataLoader(partition_train_test["train"], batch_size=32, shuffle=True)
     testloader = DataLoader(partition_train_test["test"], batch_size=32)
     return trainloader, testloader
 
 def train(net, trainloader, epochs, lr, device, proximal_mu=0.0):
+    """Train the model on the training set."""
     net.to(device)
-
     # Create global model reference for proximal term calculations
     global_model = [param.detach().clone() for param in net.parameters()]
 
@@ -84,7 +85,7 @@ def train(net, trainloader, epochs, lr, device, proximal_mu=0.0):
     optimizer = torch.optim.Adam(net.parameters(), lr=lr)
     net.train()
     running_loss = 0.0
-    total_steps = 0
+    total_steps = 0  # This is tau_i - total iterations of local solver per client
 
     for _ in range(epochs):
         for batch in trainloader:
@@ -97,7 +98,7 @@ def train(net, trainloader, epochs, lr, device, proximal_mu=0.0):
             if proximal_mu > 0.0:
                 proximal_term = 0.0
                 for local_param, global_param in zip(net.parameters(), global_model):
-                    proximal_term += (local_param - global_param).norm(2)**2
+                    proximal_term += (local_param - global_param).norm(2) ** 2
                 loss += (proximal_mu / 2) * proximal_term
 
             loss.backward()

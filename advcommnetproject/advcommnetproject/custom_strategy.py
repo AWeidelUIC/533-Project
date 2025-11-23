@@ -21,7 +21,6 @@ class FedNovaLite(FedAvg):
             self,
             server_round: int,
             results: List[Tuple[ClientProxy, FitRes]],
-            failures: List[Union[Tuple[ClientProxy, FitRes], BaseException]],
     ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
 
         if not results:
@@ -32,38 +31,38 @@ class FedNovaLite(FedAvg):
         tau_list = []
         num_examples_list = []
 
-        for client, fit_res in results:
-            # Get tau_i
+        # Calculate proper weights p_i = n_i/n (Section 2)
+        total_examples = sum(fit_res.num_examples for _, fit_res in results) # n = sum of n_i
+        weights = [fit_res.num_examples / total_examples for _, fit_res in results] # value of p_i
+
+        for (client, fit_res), weight in zip(results, weights):
+            # Get tau_i - total iterations of local solver per client
             tau_i = max(1, fit_res.metrics.get("tau_i", 1))  # Avoid division by zero
             tau_list.append(tau_i)
             num_examples_list.append(fit_res.num_examples)
 
-            # Calculate client's parameter changes (Delta_i)
+            # Calculate client's parameter changes (Delta_i = x_i - x_global) (section 4.1)
+            # (How much the client CHANGED the model)
             client_params = parameters_to_ndarrays(fit_res.parameters)
 
-            # Calculate Delta_i = Client - Global
-            # (How much the client CHANGED the model)
             delta_i = [c - g for g, c in zip(self.global_parameters, client_params)]
 
-            # Normalize delta by local steps tau
-            # "Normalized Gradient" = Total Change / Local Steps
+            # Normalize delta by local iterations/steps tau
+            # "Normalized Gradient" = Total Change / Local Steps (equation 12)
             norm_grad = [layer / tau_i for layer in delta_i]
             updates.append(norm_grad)
 
-        # Calculate effective steps (tau_eff) as weighted average of local steps
-        total_examples = sum(num_examples_list)
-        tau_eff = sum(t * (n / total_examples) for t, n in zip(tau_list, num_examples_list))
-
-        # Aggregate normalized gradients with proper weighting
-        # aggregated_update = Sum(p_i * norm_grad_i)
+        # Calculate effective steps (tau_eff) as weighted average of local steps (equation 12)
+        tau_eff = sum(w * tau for w, tau in zip(weights, tau_list))
+        # Aggregate normalized gradients with proper weighting p_i
         weighted_grads = [np.zeros_like(w) for w in self.global_parameters]
 
         for i, norm_grad in enumerate(updates):
-            p_i = num_examples_list[i] / total_examples
+            p_i = weights[i]
             for layer_idx, layer in enumerate(norm_grad):
                 weighted_grads[layer_idx] += p_i * layer
 
-        # Apply FedNova update: Global = Old Global - (tau_eff × aggregated_normalized_gradients)
+        # Apply FedNova update: Global = Old Global - (tau_eff x aggregated_normalized_gradients)
         new_weights = [
             g - (tau_eff * wg) for g, wg in zip(self.global_parameters, weighted_grads)
         ]
