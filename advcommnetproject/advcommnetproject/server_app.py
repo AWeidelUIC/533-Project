@@ -23,9 +23,19 @@ def main(grid: Grid, context: Context) -> None:
     num_rounds: int = context.run_config["num-server-rounds"]
     lr: float = context.run_config["lr"]
 
+    strategy_name = context.run_config.get("strategy", "fednova")
+    proximal_mu = context.run_config.get("proximal_mu", 0.0)
+
     # Load global model
     global_model = Net()
     arrays = ArrayRecord(global_model.state_dict())
+
+    if strategy_name == "fedavg":
+        # Standard FedAvg
+        strategy = FedAvg(fraction_train=fraction_train)
+    else:
+        # Custom strategy
+        strategy = FedNovaLite(fraction_train=fraction_train)
 
     # Initialize FedNova strategy instead of FedAvg
     strategy = FedNovaLite(fraction_train=fraction_train)
@@ -34,7 +44,7 @@ def main(grid: Grid, context: Context) -> None:
     result = strategy.start(
         grid=grid,
         initial_arrays=arrays,
-        train_config=ConfigRecord({"lr": lr}),
+        train_config=ConfigRecord({"lr": lr, "proximal_mu": proximal_mu}),
         num_rounds=num_rounds,
         evaluate_fn=central_evaluate,
     )
