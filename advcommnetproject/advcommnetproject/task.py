@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from flwr_datasets import FederatedDataset
 from flwr_datasets.partitioner import DirichletPartitioner
+# https://flower.ai/docs/datasets/ref-api/flwr_datasets.partitioner.DirichletPartitioner.html
 from torch.utils.data import DataLoader
 from torchvision.transforms import Compose, Normalize, ToTensor
 
@@ -39,30 +40,25 @@ class Net(nn.Module):
         x = F.relu(self.fc2(x))
         return self.fc3(x)
 
-
 fds = None  # Cache FederatedDataset
 
 pytorch_transforms = Compose([ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-
 
 def apply_transforms(batch):
     """Apply transforms to the partition from FederatedDataset."""
     batch["img"] = [pytorch_transforms(img) for img in batch["img"]]
     return batch
 
-
 def load_data(partition_id: int, num_partitions: int):
     """Load partition CIFAR10 data."""
     # Only initialize `FederatedDataset` once
     global fds
     if fds is None:
-        # MODIFICATION: Use DirichletPartitioner for Non-IID data
-        # alpha=0.1 creates strict "clusters" (clients get mostly 1-2 classes)
-        # alpha=100.0 approaches IID (random mix)
-        partitioner = DirichletPartitioner(
+        partitioner = DirichletPartitioner( # for non-IID data, aka data heterogeneity
             num_partitions=num_partitions,
             partition_by="label",
-            alpha=0.1,
+            alpha=0.3, # test for alpha = 0.1, 1, and 10.  higher number = more IID.  0 = non-IID
+            # NOTE: If using many clients, low alpha will throw errors.  Usually only a problem if below 1
             min_partition_size=10,
             shuffle=True
         )
@@ -73,54 +69,44 @@ def load_data(partition_id: int, num_partitions: int):
     partition = fds.load_partition(partition_id)
     # Divide data on each node: 80% train, 20% test
     partition_train_test = partition.train_test_split(test_size=0.2, seed=42)
-    # Construct dataloaders
     partition_train_test = partition_train_test.with_transform(apply_transforms)
     trainloader = DataLoader(partition_train_test["train"], batch_size=32, shuffle=True)
     testloader = DataLoader(partition_train_test["test"], batch_size=32)
     return trainloader, testloader
 
-
 def train(net, trainloader, epochs, lr, device, proximal_mu=0.0):
-    """Train the model on the training set."""
-    net.to(device)  # move model to GPU if available
+    net.to(device)
 
-    # Create a copy of the global model for reference
-    # (In a real efficient impl, we'd pass the vectors, but copying is safer for clarity)
+    # Create global model reference for proximal term calculations
     global_model = [param.detach().clone() for param in net.parameters()]
 
     criterion = torch.nn.CrossEntropyLoss().to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=lr)
     net.train()
-
     running_loss = 0.0
-    total_steps = 0  # Track total local steps (tau_i)
+    total_steps = 0
 
     for _ in range(epochs):
         for batch in trainloader:
             images = batch["img"].to(device)
             labels = batch["label"].to(device)
             optimizer.zero_grad()
-
-            # 1. Calculate standard loss
-            outputs = net(images)
             loss = criterion(net(images), labels)
 
-            # 2. Add Proximal Term if mu > 0
+            # Add proximal term if enabled (mu > 0)
             if proximal_mu > 0.0:
                 proximal_term = 0.0
                 for local_param, global_param in zip(net.parameters(), global_model):
                     proximal_term += (local_param - global_param).norm(2)**2
                 loss += (proximal_mu / 2) * proximal_term
 
-
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-            total_steps += 1  # Count each batch as one step
+            total_steps += 1
 
     avg_trainloss = running_loss / len(trainloader)
-    return avg_trainloss, total_steps  # Return both loss and tau_i
-
+    return avg_trainloss, total_steps # Return both loss and tau_i
 
 def test(net, testloader, device):
     """Validate the model on the test set."""
@@ -141,7 +127,6 @@ def test(net, testloader, device):
 def central_evaluate(server_round: int, arrays: ArrayRecord) -> MetricRecord:
     """Evaluate model on the server side."""
 
-    # Load the model and initialize it with the received weights
     model = Net()
     model.load_state_dict(arrays.to_torch_state_dict())
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

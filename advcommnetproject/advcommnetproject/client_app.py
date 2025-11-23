@@ -28,10 +28,11 @@ def train(msg: Message, context: Context):
     num_partitions = context.node_config["num-partitions"]
     trainloader, _ = load_data(partition_id, num_partitions)
 
-    random_local_epochs = max(1, min(10, int(random.expovariate(0.5) + 1)))
-    print(f"Client {partition_id} using {random_local_epochs} local epochs (random)")
+    # random epochs simulates system heterogeneity (different devices work at different speeds)
+    random_local_epochs = max(1, min(5, int(random.expovariate(0.5) + 1)))
+    print(f"Client {partition_id} using {random_local_epochs} local epochs")
 
-    # Call the training function (now returns both loss and tau_i)
+    # Call the training function
     train_loss, tau_i = train_fn(
         model,
         trainloader,
@@ -46,7 +47,7 @@ def train(msg: Message, context: Context):
     metrics = {
         "train_loss": train_loss,
         "num-examples": len(trainloader.dataset),
-        "tau_i": tau_i,  # Report local steps (tau_i) for FedNova
+        "tau_i": tau_i,  # Report gradient steps (tau_i)
         "local epochs used: ": random_local_epochs,
     }
     metric_record = MetricRecord(metrics)

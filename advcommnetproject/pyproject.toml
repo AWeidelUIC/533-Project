@@ -33,8 +33,8 @@ clientapp = "advcommnetproject.client_app:app"
 
 # Custom config values accessible via `context.run_config`
 [tool.flwr.app.config]
-num-server-rounds = 3
-fraction-train = 0.5
+num-server-rounds = 3 # 3 for testing, 10 for aggregating results
+fraction-train = 0.25
 local-epochs = 1
 lr = 0.01
 
@@ -44,7 +44,7 @@ default = "local-simulation"
 
 # Local simulation federation with 10 virtual SuperNodes
 [tool.flwr.federations.local-simulation]
-options.num-supernodes = 10
+options.num-supernodes = 100
 
 # Remote federation example for use with SuperLink
 [tool.flwr.federations.remote-federation]
