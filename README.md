@@ -8,7 +8,7 @@ Before starting, make sure you have a linux distribution running (preferably Ubu
 pip install -U "flwr[simulation]"
 ```
 
-Then, in the `AdvCommNetProject` directory,
+Then, in the `AdvCommNetProject` directory (other directories for running the other models have been supplied, `AdvCommNetProject_FedProx` and `AdvCommNetProject_FedAvg`),
 The dependencies are listed in the `pyproject.toml` and you can install them as follows:
 
 ```bash
