@@ -32,6 +32,9 @@ def train(msg: Message, context: Context):
     random_local_epochs = max(1, min(5, int(random.expovariate(0.5) + 1)))
     print(f"Client {partition_id} using {random_local_epochs} local epochs")
 
+    # Get proximal_mu from config
+    proximal_mu = msg.content["config"].get("proximal_mu", 0.0)
+
     # Call the training function
     train_loss, tau_i = train_fn(
         model,
@@ -39,7 +42,7 @@ def train(msg: Message, context: Context):
         random_local_epochs,
         msg.content["config"]["lr"],
         device,
-        proximal_mu=0.01,
+        proximal_mu=proximal_mu,
     )
 
     # Construct and return reply Message
@@ -48,7 +51,7 @@ def train(msg: Message, context: Context):
         "train_loss": train_loss,
         "num-examples": len(trainloader.dataset),
         "tau_i": tau_i,  # Report gradient steps (tau_i)
-        "local epochs used: ": random_local_epochs,
+        "local_epochs: ": random_local_epochs,
     }
     metric_record = MetricRecord(metrics)
     content = RecordDict({"arrays": model_record, "metrics": metric_record})

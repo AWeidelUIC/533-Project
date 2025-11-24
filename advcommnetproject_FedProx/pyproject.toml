@@ -37,6 +37,7 @@ num-server-rounds = 20 # 3 for testing, 10 for aggregating results
 fraction-train = 1
 local-epochs = 1
 lr = 0.01
+proximal-mu = 0.01
 
 # Default federation to use when running the app
 [tool.flwr.federations]
